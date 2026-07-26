@@ -44,6 +44,8 @@ Measured on 196 public MCP servers from the official registry: **99% scanned cle
 false-positive rate was driven from 14.8% to 1.0% by the calibration above. The one genuinely
 concerning finding was a prompt-injection payload in a tool description — exactly what this catches.
 
+**Full results: [FINDINGS.md](FINDINGS.md)** — the noise taxonomy, the two flagged servers, and the trust-posture finding.
+
 ## Usage
 
 ```bash
