@@ -81,6 +81,17 @@ python mcp_audit.py --github <owner/repo> || {
 3. **Treat remote-only servers as unauditable** and scope their permissions and credentials tightly.
 4. **Re-scan on update** — a description is one commit from changing.
 
+## Scan the whole registry, or a list, without installing anything
+
+This CLI audits one repo at a time. To sweep the **entire official MCP registry** (or your own
+list of servers) in one run and get a dataset back — risk level, score and evidence per server,
+plus which registry entries have had their source *deleted since listing* — run the same engine
+as a hosted Actor:
+
+**[MCP Server Security Scanner on the Apify Store →](https://apify.com/eltociear/mcp-server-security-scanner)**
+
+No install, no key; pay-per-server so a run costs only what it scans.
+
 ## Related
 
 - **pypi-supply-scan** — catch install-time PyPI malware before `pip install` runs it:
