@@ -88,7 +88,7 @@ list of servers) in one run and get a dataset back — risk level, score and evi
 plus which registry entries have had their source *deleted since listing* — run the same engine
 as a hosted Actor:
 
-**[MCP Server Security Scanner on the Apify Store →](https://apify.com/eltociear/mcp-server-security-scanner)**
+**[Repo Security Scanner on the Apify Store →](https://apify.com/eltociear/mcp-server-security-scanner)** — sweep the whole MCP registry, a GitHub org, or any repo list.
 
 No install, no key; pay-per-server so a run costs only what it scans.
 
