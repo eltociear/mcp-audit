@@ -40,11 +40,12 @@ the risk score**. Validated: benign real-world repos score **0** (a popular web 
 that a naive scan rated CRITICAL scans clean here); malicious canaries all trip at the right
 severity. 17 named patterns / 60 signatures, deterministic — no LLM, no network needed to score.
 
-Measured on 196 public MCP servers from the official registry: **99% scanned clean**, and the
-false-positive rate was driven from 14.8% to 1.0% by the calibration above. The one genuinely
-concerning finding was a prompt-injection payload in a tool description — exactly what this catches.
+Measured on **1,060 public MCP servers** from the official registry (2026-11): **98.96% scanned
+clean**, HIGH/CRITICAL driven from 4.8% to 0.85% by calibration, with only 0.57% benign (July: 196
+servers, 14.8% → 1.0%). No malicious servers found. The July scan's one genuinely concerning finding
+was a prompt-injection payload in a tool description — exactly what this catches.
 
-**Full results: [FINDINGS.md](FINDINGS.md)** — the noise taxonomy, the two flagged servers, and the trust-posture finding.
+**Full results: [FINDINGS.md](FINDINGS.md)** — the 2026-11 rescan of 1,060 servers, new noise classes, and the trust-posture finding.
 
 ## Usage
 
@@ -60,6 +61,12 @@ python mcp_audit.py --text "…"
 
 # machine-readable
 python mcp_audit.py --json server.py
+
+# bulk-scan a list of repos (uses gh; reruns retry failures)
+python scripts/bulk_scan.py repos.json out.jsonl --workers 12
+
+# run the calibration tests
+python -m unittest discover tests
 ```
 
 ### Before you connect an agent to a third-party MCP server
