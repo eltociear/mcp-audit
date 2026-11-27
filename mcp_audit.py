@@ -693,6 +693,10 @@ def _fam_uri(target, file):
     t = target or ""
     if t and os.path.isdir(t):
         p = os.path.normpath(os.path.join(t, file)) if file else os.path.normpath(t)
+        parts = file.split("/")
+        for k in range(1, len(parts)):   # scanner-side prefixes (e.g. custom_components/<d>/) not on disk
+            if not os.path.exists(p) and os.path.exists(os.path.join(t, *parts[k:])):
+                p = os.path.normpath(os.path.join(t, *parts[k:]))
     elif t and os.path.isfile(t) and (not file or file == t or file == os.path.basename(t)):
         p = os.path.normpath(t)
     elif t and os.path.isfile(t):
